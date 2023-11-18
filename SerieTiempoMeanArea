@@ -1,0 +1,86 @@
+// Load Sentinel-3 OLCI L2WFR product
+var collection = ee.ImageCollection('COPERNICUS/S3/OLCI')
+  .filterDate('2020-04-01', '2020-04-05');  // Define the time period
+
+// Load a shapefile as the region of interest
+var shapefile = ee.FeatureCollection("projects/ee-redtidealer/assets/Barrio2");
+var region = shapefile.geometry();
+
+// Define a function to clip each image in the collection to the specified geometry
+var clipToGeometry = function(image) {
+  return image.clip(region);
+};
+
+// Use the map function to apply the clipping function to each image in the collection
+var clippedCollection = collection.map(clipToGeometry);
+
+// Function to calculate NDCI with radiance conversion and mean value
+var addNDCIWithMean = function(image) {
+  // Select bands and convert to radiance
+  var b11 = image.select(['Oa11_radiance'])
+    .multiply(ee.Image([0.00675523]));
+
+  var b08 = image.select(['Oa08_radiance'])
+    .multiply(ee.Image([0.00876539]));
+
+  // Calculate NDCI
+  var ndci = b11.subtract(b08).divide(b11.add(b08)).rename('NDCI');
+
+  // Calculate mean value within the shapefile's geometry
+  var meanValue = ndci.reduceRegion({
+    reducer: ee.Reducer.mean(),
+    geometry: shapefile.geometry(),
+    scale: 10  // Adjust scale as needed
+  });
+
+  // Get the mean value for the 'NDCI' band
+  var meanNCDI = meanValue.get('NDCI');
+
+  // Add the mean value as a property to the image
+  return image.set('meanNCDI', meanNCDI);
+};
+
+// Apply the function to the image collection
+var collectionWithNDCIAndMean = clippedCollection.map(addNDCIWithMean);
+
+
+// Filter out null values
+var filteredCollection = collectionWithNDCIAndMean.filter(ee.Filter.notNull(['meanNCDI']));
+
+// Extract mean NCDI values and dates for plotting
+var meanNCDIValues = filteredCollection.aggregate_array('meanNCDI');
+var dates = filteredCollection.aggregate_array('system:time_start');
+
+
+// Print mean NCDI values to the console
+print(meanNCDIValues);
+print(dates);
+
+// Create a FeatureCollection with dates and mean NCDI values
+var featureCollection = ee.FeatureCollection(
+  dates.map(function(date, index) {
+    var formattedDate = ee.Date(date).format("YYYY-MM-dd");
+    return ee.Feature(null, {
+      'date': formattedDate,
+      'meanNCDI': meanNCDIValues.get(index)
+    });
+  })
+);
+
+// Create a chart for the mean NCDI values over time
+var chart = ui.Chart.feature.byFeature(featureCollection)
+  .setChartType('LineChart')
+  .setOptions({
+    title: 'Mean NCDI Values Over Time',
+    hAxis: { title: 'Time' },
+    vAxis: { title: 'Mean NCDI Value' }
+});
+
+// Clear existing charts
+ui.root.clear();
+
+// Display the chart
+ui.root.widgets().reset([chart]);
+
+// Print the chart to the console
+print(chart);
