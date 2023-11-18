@@ -1,0 +1,38 @@
+// Define the location (latitude and longitude)
+var location = ee.Geometry.Point(-73, -42);
+
+// Load Sentinel-3 OLCI L2WFR product
+var collection = ee.ImageCollection('COPERNICUS/S3/OLCI')
+  .filterBounds(location)  // Provide the point geometry
+  .filterDate('2020-04-01', '2020-04-10');  // Define the time period
+
+// Function to calculate NDCI with radiance conversion
+var addNDCI = function(image) {
+  // Select bands and convert to radiance
+  var b11 = image.select(['Oa11_radiance'])
+    .multiply(ee.Image([0.00675523]));
+
+  var b08 = image.select(['Oa08_radiance'])
+    .multiply(ee.Image([0.00876539]));
+
+  // Calculate NDCI
+  var ndci = b11.subtract(b08).divide(b11.add(b08)).rename('NDCI');
+
+  return image.addBands(ndci);
+};
+
+// Apply the function to the image collection
+var ndciCollection = collection.map(addNDCI);
+
+// Create a time series chart for NDCI
+var chart = ui.Chart.image.seriesByRegion({
+  imageCollection: ndciCollection,
+  band: 'NDCI',
+  regions: location,
+  reducer: ee.Reducer.mean(),
+  scale: 10,
+  xProperty: 'system:time_start'
+});
+
+// Display the chart
+print(chart);
